@@ -1,30 +1,23 @@
 package com.cloudera.streaming
 
-import java.io.{File, FileInputStream}
+import java.io.FileInputStream
 import java.text.SimpleDateFormat
 import java.util.{Date, Properties}
 
-import com.cloudera.streaming.Kafka2SparkStreaming2Kudu.delete
 import org.apache.commons.lang.StringUtils
 import org.apache.kafka.common.serialization.StringDeserializer
 import org.apache.kudu.{ColumnSchema, Type}
+import org.apache.kudu.client.{Delete, PartialRow}
 import org.apache.kudu.client.SessionConfiguration.FlushMode
-import org.apache.kudu.client.{CreateTableOptions, KuduClient, KuduSession, KuduTable, PartialRow, RowErrorsAndOverflowStatus}
-import org.apache.kudu.consensus.Consensus
+import org.apache.kudu.spark.kudu.KuduContext
 import org.apache.log4j.{Level, Logger}
-import org.apache.kudu.spark.kudu._
-import org.apache.spark.{SparkConf, SparkContext, SparkFiles}
-import org.apache.spark.sql.{Row, SparkSession}
-import org.apache.spark.sql.types.{StringType, StructField, StructType}
-import org.apache.spark.streaming.kafka010.{ConsumerStrategies, KafkaUtils, LocationStrategies}
+import org.apache.spark.sql.SparkSession
 import org.apache.spark.streaming.{Seconds, StreamingContext}
+import org.apache.spark.streaming.kafka010.{ConsumerStrategies, KafkaUtils, LocationStrategies}
 import org.slf4j.LoggerFactory
 
-import scala.collection.JavaConverters._
-import scala.collection.immutable.HashMap
 import scala.util.{Failure, Success, Try}
 import scala.util.parsing.json.JSON
-
 
 object Kafka2SparkStreaming2Kudu {
   val logger = LoggerFactory.getLogger(Kafka2SparkStreaming2Kudu.getClass)
@@ -37,27 +30,25 @@ object Kafka2SparkStreaming2Kudu {
   /**
    * 建表Schema定义
    */
-//  val userInfoSchema = StructType(
-//    //         col name   type     nullable?
-//      StructField("id", StringType , false) ::
-//      StructField("name" , StringType, true ) ::
-//      StructField("sex" , StringType, true ) ::
-//      StructField("city" , StringType, true ) ::
-//      StructField("occupation" , StringType, true ) ::
-//      StructField("tel" , StringType, true ) ::
-//      StructField("fixPhoneNum" , StringType, true ) ::
-//      StructField("bankName" , StringType, true ) ::
-//      StructField("address" , StringType, true ) ::
-//      StructField("marriage" , StringType, true ) ::
-//      StructField("childNum", StringType , true ) :: Nil
-//  )
-
-
+  //  val userInfoSchema = StructType(
+  //    //         col name   type     nullable?
+  //      StructField("id", StringType , false) ::
+  //      StructField("name" , StringType, true ) ::
+  //      StructField("sex" , StringType, true ) ::
+  //      StructField("city" , StringType, true ) ::
+  //      StructField("occupation" , StringType, true ) ::
+  //      StructField("tel" , StringType, true ) ::
+  //      StructField("fixPhoneNum" , StringType, true ) ::
+  //      StructField("bankName" , StringType, true ) ::
+  //      StructField("address" , StringType, true ) ::
+  //      StructField("marriage" , StringType, true ) ::
+  //      StructField("childNum", StringType , true ) :: Nil
+  //  )
 
   /**
    * 定义一个UserInfo对象
    */
-   case class UserInfo (
+  case class UserInfo (
                         id: String,
                         name: String,
                         sex: String,
@@ -78,15 +69,15 @@ object Kafka2SparkStreaming2Kudu {
     //System.out.println(SparkFiles.get("conf.properties"))
     //val file = new File(confPath)
     //if(!file.exists()) {
-//      System.out.println(Kafka2SparkStreaming2Kudu.getClass.getClassLoader.getResource("conf.properties"))
-//      val in = Kafka2SparkStreaming2Kudu.getClass.getClassLoader.getResourceAsStream("conf.properties")
-//      properties.load(in);
+    //      System.out.println(Kafka2SparkStreaming2Kudu.getClass.getClassLoader.getResource("conf.properties"))
+    //      val in = Kafka2SparkStreaming2Kudu.getClass.getClassLoader.getResourceAsStream("conf.properties")
+    //      properties.load(in);
     //} else {
-     // properties.load(new FileInputStream(confPath))
+    // properties.load(new FileInputStream(confPath))
     //}
-//    System.out.println(this.getClass.getResource("conf.properties"))
-//    val in = this.getClass.getResourceAsStream("conf.properties")
-//    properties.load(in)
+    //    System.out.println(this.getClass.getResource("conf.properties"))
+    //    val in = this.getClass.getResourceAsStream("conf.properties")
+    //    properties.load(in)
     properties.load(new FileInputStream("./conf.properties"))
 
     val brokers = properties.getProperty("kafka.brokers")
@@ -154,9 +145,9 @@ object Kafka2SparkStreaming2Kudu {
                   //                  delete("impala::" + "ccic_kudu_sj_dev." + tableName, afterColumnList, kuduContext)
                   //                }
                   operationType match {
-                    case "I" => insert("impala::" + "ccic_kudu_sj_dev." + tableName, afterColumnList, kuduContext)
-                    case "U" => insert("impala::" + "ccic_kudu_sj_dev." + tableName, afterColumnList, kuduContext)
-                    case "D" => delete("impala::" + "ccic_kudu_sj_dev." + tableName, afterColumnList, kuduContext)
+                    case "I" => insertRows("impala::" + "ccic_kudu_sj_dev." + tableName, afterColumnList, kuduContext)
+                    case "U" => updateRows("impala::" + "ccic_kudu_sj_dev." + tableName, afterColumnList, kuduContext)
+                    case "D" => deleteRows("impala::" + "ccic_kudu_sj_dev." + tableName, afterColumnList, kuduContext)
                     case _ => logger.warn("Unknown OperationType")
                   }
                 }
@@ -174,31 +165,43 @@ object Kafka2SparkStreaming2Kudu {
       })
 
       //将RDD转换为DataFrame
-    //val userinfoDF = spark.sqlContext.createDataFrame(newrdd)
-    //kuduContext.upsertRows(userinfoDF, "user_info")
-    //kuduContext.in
-  })
+      //val userinfoDF = spark.sqlContext.createDataFrame(newrdd)
+      //kuduContext.upsertRows(userinfoDF, "user_info")
+      //kuduContext.in
+    })
     ssc.start()
     ssc.awaitTermination()
   }
 
+  def insertRows(tableName:String,columnList: Map[String,String],context: KuduContext): Unit = {
+    writeRows(tableName,columnList,context,Upsert)
+  }
+
+  def updateRows(tableName:String,columnList: Map[String,String],context: KuduContext): Unit = {
+    writeRows(tableName,columnList,context,Upsert)
+  }
+
+  def deleteRows(tableName:String,columnList: Map[String,String],context: KuduContext): Unit = {
+    writeRows(tableName,columnList,context,Delete)
+  }
 
 
-  def insert(tableName: String, columnList: Map[String,String], context: KuduContext): Unit = {
-    //val syncClient = context.syncClient
+  def writeRows(tableName:String,columnList: Map[String,String],context: KuduContext,operationType: OperationType): Unit = {
+    // Get the client's last propagated timestamp on the driver.
     val lastPropagatedTimestamp = context.syncClient.getLastPropagatedTimestamp
     context.syncClient.updateLastPropagatedTimestamp(lastPropagatedTimestamp)
     val table = context.syncClient.openTable(tableName)
     val session = context.syncClient.newSession
-    session.setFlushMode(FlushMode.AUTO_FLUSH_BACKGROUND)
-    //session.setIgnoreAllDuplicateRows(true)
-
     val schema = table.getSchema
-    val insert = table.newUpsert()
-    val row = insert.getRow
+    val operation = operationType.operation(table)
+
     columnList.foreach{ case (column, newValue) => {
       try {
-        addColumnData(row, schema.getColumn(column.toLowerCase), newValue)
+        if(operation.isInstanceOf[Delete] && schema.getColumn(column.toLowerCase()).isKey) {
+          addColumnData(operation.getRow, schema.getColumn(column.toLowerCase), newValue)
+        } else{
+          addColumnData(operation.getRow, schema.getColumn(column.toLowerCase), newValue)
+        }
       } catch {
         case e: IllegalArgumentException => {
           logger.warn(s"Will not add ($column, $newValue) for ${table.getName}", e)
@@ -206,40 +209,16 @@ object Kafka2SparkStreaming2Kudu {
       }
       //      logger.info(s"Writing $column , $newValue")
     }}
-    session.apply(insert)
+    session.apply(operation)
     session.close()
     context.timestampAccumulator.add(context.syncClient.getLastPropagatedTimestamp)
-
-  }
-
-
-  def delete(tableName: String, columnList: Map[String,String], context: KuduContext): Unit = {
-    //val syncClient = context.syncClient
-    val lastPropagatedTimestamp = context.syncClient.getLastPropagatedTimestamp
-    context.syncClient.updateLastPropagatedTimestamp(lastPropagatedTimestamp)
-    val table = context.syncClient.openTable(tableName)
-    val session = context.syncClient.newSession
-    session.setFlushMode(FlushMode.AUTO_FLUSH_BACKGROUND)
-    //session.setIgnoreAllDuplicateRows(true)
-
-    val schema = table.getSchema
-
-    val delete = table.newDelete()
-    val row = delete.getRow
-    columnList.foreach{ case (column, value) => {
-      if (schema.getColumn(column.toLowerCase()).isKey) {
-        try {
-          addColumnData(row, schema.getColumn(column.toLowerCase()), value)
-        } catch {
-          case e: IllegalArgumentException => {
-            logger.warn(s"Will not add ($column, $value) for ${table.getName}", e)
-          }
-        }
-      }
-    }}
-    session.apply(delete)
-    session.close()
-    context.timestampAccumulator.add(context.syncClient.getLastPropagatedTimestamp)
+    val pendingErrors = session.getPendingErrors
+    val errorCount = pendingErrors.getRowErrors.length
+    if (errorCount > 0) {
+      val errors = pendingErrors.getRowErrors.map(_.getErrorStatus).mkString
+      throw new RuntimeException(
+        s"failed to write $errorCount rows  to Kudu; sample errors: $errors")
+    }
   }
 
   def addColumnData(row: PartialRow, column: ColumnSchema, newValue: String) : Unit = {
@@ -280,4 +259,5 @@ object Kafka2SparkStreaming2Kudu {
       case Failure(exception) => dateString.toLong
     }
   }
+
 }

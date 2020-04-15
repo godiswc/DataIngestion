@@ -1,6 +1,6 @@
 package com.cloudera.streaming
 
-import com.cloudera.streaming.Kafka2SparkStreaming2Kudu.{addColumnData, logger}
+import com.cloudera.streaming.Kafka2SparkStreaming2KuduV1.{addColumnData, logger}
 import org.apache.spark.sql.types.{StringType, StructField, StructType}
 import org.apache.spark.sql.{Row, SparkSession}
 
